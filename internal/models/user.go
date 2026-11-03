@@ -18,6 +18,12 @@ type User struct {
 	UpdatedAt time.Time     `bson:"updated_at"    json:"updated_at"`
 }
 
+// UpdateUserRequest is what a client may send when updating a user.
+type UpdateUserRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 // CreateUserRequest contains only the fields clients may provide when creating
 // a user. The server fills in the database ID and timestamps itself.
 type CreateUserRequest struct {

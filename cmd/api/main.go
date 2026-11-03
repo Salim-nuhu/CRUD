@@ -53,6 +53,10 @@ func main() {
 	})
 	// Route requests that create a user to the user-specific handler.
 	mux.HandleFunc("POST /users", userHandler.Create)
+	mux.HandleFunc("GET /users", userHandler.List)
+	mux.HandleFunc("GET /users/{id}", userHandler.GetByID)
+	mux.HandleFunc("PUT /users/{id}", userHandler.Update)
+	mux.HandleFunc("DELETE /users/{id}", userHandler.Delete)
 
 	// Timeouts prevent a slow client from keeping a connection busy forever.
 	srv := &http.Server{
