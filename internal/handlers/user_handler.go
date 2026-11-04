@@ -3,15 +3,16 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Salim-nuhu/CRUD/internal/models"
 	"github.com/Salim-nuhu/CRUD/internal/repository"
 	"github.com/Salim-nuhu/CRUD/internal/response"
+	"github.com/Salim-nuhu/CRUD/internal/validation"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -31,9 +32,9 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, email, err := cleanUserInput(req.Name, req.Email)
-	if err != nil {
-		response.Error(w, http.StatusBadRequest, err.Error())
+	name, email, errs := validation.User(req.Name, req.Email)
+	if len(errs) > 0 {
+		writeValidationError(w, errs)
 		return
 	}
 
@@ -67,7 +68,7 @@ func (h *UserHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
-	page := queryInt(r, "page", 1, 1)
+	page := queryInt(r, "page", 1, 100000)
 	limit := queryInt(r, "limit", 20, 100) // default 20, never more than 100
 	skip := (page - 1) * limit
 
@@ -95,9 +96,9 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, email, err := cleanUserInput(req.Name, req.Email)
-	if err != nil {
-		response.Error(w, http.StatusBadRequest, err.Error())
+	name, email, errs := validation.User(req.Name, req.Email)
+	if len(errs) > 0 {
+		writeValidationError(w, errs)
 		return
 	}
 
@@ -119,7 +120,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeRepoError(w, "delete user", err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent) // 204: success, nothing to send back
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- helpers ----------
@@ -131,25 +132,34 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
+
 	if err := dec.Decode(dst); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid JSON body")
+		var tooBig *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooBig):
+			response.Error(w, http.StatusRequestEntityTooLarge, "request body too large")
+		case errors.Is(err, io.EOF):
+			response.Error(w, http.StatusBadRequest, "request body is empty")
+		default:
+			response.Error(w, http.StatusBadRequest, "invalid JSON body")
+		}
+		return false
+	}
+
+	// Reject bodies like {"name":"a"}{"name":"b"}: after the first JSON
+	// value there must be nothing left.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		response.Error(w, http.StatusBadRequest, "body must contain a single JSON object")
 		return false
 	}
 	return true
 }
 
-// cleanUserInput trims and validates the fields shared by create and update.
-func cleanUserInput(name, email string) (string, string, error) {
-	name = strings.TrimSpace(name)
-	email = strings.ToLower(strings.TrimSpace(email))
-
-	if name == "" || email == "" {
-		return "", "", errors.New("name and email are required")
-	}
-	if !strings.Contains(email, "@") {
-		return "", "", errors.New("email is not valid")
-	}
-	return name, email, nil
+func writeValidationError(w http.ResponseWriter, errs validation.Errors) {
+	response.JSON(w, http.StatusUnprocessableEntity, map[string]any{
+		"error":  "validation failed",
+		"fields": errs,
+	})
 }
 
 // parseID reads {id} from the URL and converts it to a MongoDB ObjectID.
@@ -162,14 +172,14 @@ func parseID(w http.ResponseWriter, r *http.Request) (bson.ObjectID, bool) {
 	return id, true
 }
 
-// queryInt reads an integer query parameter, falling back to def when it is
-// missing or invalid, and clamping it to the range [1, max].
+// queryInt reads an integer query parameter. A missing or invalid value
+// gives def; a value above max is clamped down to max.
 func queryInt(r *http.Request, key string, def, max int) int {
 	n, err := strconv.Atoi(r.URL.Query().Get(key))
 	if err != nil || n < 1 {
 		return def
 	}
-	if n > max && key == "limit" {
+	if n > max {
 		return max
 	}
 	return n
@@ -183,7 +193,7 @@ func writeRepoError(w http.ResponseWriter, op string, err error) {
 	case errors.Is(err, repository.ErrEmailTaken):
 		response.Error(w, http.StatusConflict, "email already in use")
 	default:
-		log.Printf("%s: %v", op, err) // real error stays in our logs
+		log.Printf("%s: %v", op, err)
 		response.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
 }
