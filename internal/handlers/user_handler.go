@@ -3,17 +3,17 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"log"
-	"net/http"
-	"strconv"
-	"time"
-
+	"github.com/Salim-nuhu/CRUD/internal/auth"
 	"github.com/Salim-nuhu/CRUD/internal/models"
 	"github.com/Salim-nuhu/CRUD/internal/repository"
 	"github.com/Salim-nuhu/CRUD/internal/response"
 	"github.com/Salim-nuhu/CRUD/internal/validation"
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"io"
+	"log"
+	"net/http"
+	"strconv"
+	"time"
 )
 
 type UserHandler struct {
@@ -33,17 +33,29 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name, email, errs := validation.User(req.Name, req.Email)
+	if msg := validation.Password(req.Password); msg != "" {
+		errs["password"] = msg
+	}
 	if len(errs) > 0 {
 		writeValidationError(w, errs)
 		return
 	}
 
+	// Hash only after validation passes: hashing is deliberately slow.
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		log.Printf("hash password: %v", err) // never log the password itself
+		response.Error(w, http.StatusInternalServerError, "something went wrong")
+		return
+	}
+
 	now := time.Now().UTC()
 	user := models.User{
-		Name:      name,
-		Email:     email,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Name:         name,
+		Email:        email,
+		PasswordHash: hash,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	if err := h.repo.Create(r.Context(), &user); err != nil {

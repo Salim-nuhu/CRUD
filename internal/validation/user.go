@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	minNameLen  = 2
-	maxNameLen  = 100
-	maxEmailLen = 254
+	minNameLen       = 2
+	maxNameLen       = 100
+	maxEmailLen      = 254
+	minPasswordLen   = 8
+	maxPasswordBytes = 72
 )
 
 // Errors maps a field name to what is wrong with it.
@@ -55,4 +57,16 @@ func validEmail(email string) bool {
 	// "a@b" is technically parseable but is never a real public address.
 	at := strings.LastIndex(email, "@")
 	return strings.Contains(email[at+1:], ".")
+}
+
+// Password returns a problem description, or "" if the password is fine.
+// We do NOT trim it: spaces are legitimate password characters.
+func Password(password string) string {
+	switch {
+	case utf8.RuneCountInString(password) < minPasswordLen:
+		return "password must be at least 8 characters"
+	case len(password) > maxPasswordBytes:
+		return "password must be at most 72 bytes"
+	}
+	return ""
 }
