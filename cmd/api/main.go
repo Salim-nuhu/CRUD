@@ -11,6 +11,7 @@ import (
 	"github.com/Salim-nuhu/CRUD/internal/config"
 	"github.com/Salim-nuhu/CRUD/internal/database"
 	"github.com/Salim-nuhu/CRUD/internal/handlers"
+	"github.com/Salim-nuhu/CRUD/internal/middleware"
 	"github.com/Salim-nuhu/CRUD/internal/repository"
 	"github.com/Salim-nuhu/CRUD/internal/router"
 )
@@ -37,9 +38,16 @@ func main() {
 	}
 	userHandler := handlers.NewUserHandler(userRepo)
 
+	// Logger is outermost, so it also sees the 500 that Recover produces.
+	handler := middleware.Chain(
+		router.New(userHandler),
+		middleware.Logger,
+		middleware.Recover,
+	)
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      router.New(userHandler),
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}

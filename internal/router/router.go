@@ -7,9 +7,6 @@ import (
 	"github.com/Salim-nuhu/CRUD/internal/response"
 )
 
-// New builds the route table and returns it as an http.Handler.
-// Returning the interface (not *ServeMux) means that in Step 5 we can
-// wrap the result in middleware without changing anything else.
 func New(users *handlers.UserHandler) http.Handler {
 	mux := http.NewServeMux()
 
