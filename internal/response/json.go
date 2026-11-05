@@ -1,7 +1,9 @@
 package response
 
 import (
+	// json encodes Go values into response bodies.
 	"encoding/json"
+	// http provides the response writer and status-related interfaces.
 	"net/http"
 )
 
@@ -18,5 +20,6 @@ func JSON(w http.ResponseWriter, status int, data any) {
 
 // Error gives clients a consistent JSON shape for an error message.
 func Error(w http.ResponseWriter, status int, message string) {
+	// Encode the message using the shared JSON response format.
 	JSON(w, status, map[string]string{"error": message})
 }

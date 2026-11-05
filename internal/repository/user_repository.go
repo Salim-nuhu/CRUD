@@ -201,3 +201,25 @@ func (repo *UserRepository) Delete(ctx context.Context, id bson.ObjectID) error 
 	// nil indicates that one matching user was deleted.
 	return nil
 }
+
+func (repo *UserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	// Limit email lookups so a slow database cannot hold the request indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Release the timeout timer when the lookup ends.
+	defer cancel()
+
+	// Prepare the value that will receive the matching user document.
+	var user models.User
+	// Search by the normalized email and decode the first match.
+	err := repo.coll.FindOne(ctx, bson.M{"email": email}).Decode(&user)
+	// Translate a missing document into the repository's stable not-found error.
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	// Return other database errors to the handler for logging and response mapping.
+	if err != nil {
+		return nil, err
+	}
+	// Return the decoded account record.
+	return &user, nil
+}
