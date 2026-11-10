@@ -78,10 +78,13 @@ func main() {
 	protect := middleware.RequireAuth(tokens)
 	ownerOnly := middleware.RequireRole(models.RoleOwner)
 
-	// Logger is outermost, so it also sees the 500 that Recover produces.
+	// Logger is outermost so every request is logged. CORS comes before
+	// Recover and the router so that even error responses carry CORS
+	// headers: otherwise a browser would hide a real 401 behind a CORS error.
 	handler := middleware.Chain(
 		router.New(userHandler, authHandler, protect, ownerOnly),
 		middleware.Logger,
+		middleware.CORS(cfg.AllowedOrigins),
 		middleware.Recover,
 	)
 
