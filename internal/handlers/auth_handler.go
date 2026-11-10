@@ -75,7 +75,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a signed token whose subject identifies the authenticated user.
-	token, err := h.tokens.Generate(user.ID.Hex())
+	token, err := h.tokens.Generate(user.ID.Hex(), user.Role)
 	if err != nil {
 		writeRepoError(w, "generate token", err) // logs it, replies 500
 		return

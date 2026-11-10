@@ -28,6 +28,8 @@ import (
 	"github.com/Salim-nuhu/CRUD/internal/repository"
 	// router registers URL patterns and connects them to handlers.
 	"github.com/Salim-nuhu/CRUD/internal/router"
+
+	"github.com/Salim-nuhu/CRUD/internal/models"
 )
 
 // main loads configuration, assembles the API, and controls its server lifecycle.
@@ -73,12 +75,13 @@ func main() {
 
 	// Logger is outermost, so it also sees the 500 that Recover produces.
 	// Wrap routes with request logging and panic recovery.
+	protect := middleware.RequireAuth(tokens)
+	ownerOnly := middleware.RequireRole(models.RoleOwner)
+
+	// Logger is outermost, so it also sees the 500 that Recover produces.
 	handler := middleware.Chain(
-		// Register all application HTTP endpoints.
-		router.New(userHandler, authHandler),
-		// Log requests and resulting status codes.
+		router.New(userHandler, authHandler, protect, ownerOnly),
 		middleware.Logger,
-		// Convert unexpected panics into internal-server-error responses.
 		middleware.Recover,
 	)
 

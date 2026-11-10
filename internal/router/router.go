@@ -1,43 +1,48 @@
 package router
 
 import (
-	// http creates the route multiplexer and handler interfaces.
 	"net/http"
 
-	// handlers provides the endpoint methods registered below.
+	"github.com/Salim-nuhu/CRUD/internal/auth"
 	"github.com/Salim-nuhu/CRUD/internal/handlers"
-	// response formats the health endpoint's JSON result.
+	"github.com/Salim-nuhu/CRUD/internal/middleware"
 	"github.com/Salim-nuhu/CRUD/internal/response"
 )
 
-// New registers application routes and returns their HTTP multiplexer.
-func New(users *handlers.UserHandler, authH *handlers.AuthHandler) http.Handler {
-	// Create a standard-library router for method-aware path patterns.
+func New(
+	users *handlers.UserHandler,
+	authH *handlers.AuthHandler,
+	protect middleware.Middleware,
+	ownerOnly middleware.Middleware,
+) http.Handler {
 	mux := http.NewServeMux()
 
-	// Register an unauthenticated endpoint for checking service health.
+	// Public routes
 	mux.HandleFunc("GET /health", health)
-
-	// Register the login endpoint that issues bearer tokens.
 	mux.HandleFunc("POST /auth/login", authH.Login)
+	mux.HandleFunc("POST /users", users.Create) // registration
 
-	// Register user creation with a JSON request body.
-	mux.HandleFunc("POST /users", users.Create)
-	// Register paginated user listing.
-	mux.HandleFunc("GET /users", users.List)
-	// Register lookup by the user's path ID.
-	mux.HandleFunc("GET /users/{id}", users.GetByID)
-	// Register replacement of the user's editable fields.
-	mux.HandleFunc("PUT /users/{id}", users.Update)
-	// Register deletion by the user's path ID.
-	mux.HandleFunc("DELETE /users/{id}", users.Delete)
+	// Protected routes: a valid token is required
+	mux.Handle("GET /users", protect(http.HandlerFunc(users.List)))
+	mux.Handle("GET /users/me", protect(http.HandlerFunc(users.Me)))
+	mux.Handle("GET /users/{id}", protect(http.HandlerFunc(users.GetByID)))
+	mux.Handle("PUT /users/{id}", protect(http.HandlerFunc(users.Update)))
+	mux.Handle("DELETE /users/{id}", protect(http.HandlerFunc(users.Delete)))
 
-	// Return the configured multiplexer as the application's HTTP handler.
+	// TEMPORARY: delete after testing roles
+	mux.Handle("GET /owner-check", protect(ownerOnly(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			id, _ := auth.IdentityFromContext(r.Context())
+			response.JSON(w, http.StatusOK, map[string]string{
+				"message": "welcome, owner",
+				"role":    id.Role,
+			})
+		},
+	))))
+
 	return mux
 }
 
-// health reports that the HTTP process is available.
 func health(w http.ResponseWriter, r *http.Request) {
-	// Return a small JSON status payload with HTTP 200.
 	response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

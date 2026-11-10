@@ -44,21 +44,28 @@ func NewUserHandler(repo *repository.UserRepository) *UserHandler {
 // ---------- handlers ----------
 
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
-	// Prepare a value to receive the new user's JSON fields.
 	var req models.CreateUserRequest
-	// Stop if the request body cannot be decoded safely.
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	// Normalize and validate the shared name and email fields.
 	name, email, errs := validation.User(req.Name, req.Email)
-	// Validate the password separately because it is not part of user updates.
+
 	if msg := validation.Password(req.Password); msg != "" {
-		// Attach any password problem to the same field-error map.
 		errs["password"] = msg
 	}
-	// Return all detected field errors together instead of partially creating a user.
+
+	role, msg := validation.Role(req.Role)
+	if msg != "" {
+		errs["role"] = msg
+	}
+
+	// Owners need a phone number, because buyers will contact them.
+	phone, msg := validation.Phone(req.Phone, role == models.RoleOwner)
+	if msg != "" {
+		errs["phone"] = msg
+	}
+
 	if len(errs) > 0 {
 		writeValidationError(w, errs)
 		return
@@ -72,28 +79,21 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use a single UTC time for both creation and last-update timestamps.
 	now := time.Now().UTC()
-	// Build the database record with normalized fields and the password hash.
 	user := models.User{
-		// Store the validated display name.
-		Name: name,
-		// Store the normalized email address.
-		Email: email,
-		// Persist only the one-way hash rather than the submitted password.
+		Name:         name,
+		Email:        email,
+		Phone:        phone,
+		Role:         role,
 		PasswordHash: hash,
-		// Record when this user was first created.
-		CreatedAt: now,
-		// Initially, the creation and update timestamps are identical.
-		UpdatedAt: now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
-	// Insert the user using the request context and handle database failures.
 	if err := h.repo.Create(r.Context(), &user); err != nil {
 		writeRepoError(w, "create user", err)
 		return
 	}
-	// Return the created user, including its assigned ID, with 201 Created.
 	response.JSON(w, http.StatusCreated, user)
 }
 
@@ -145,53 +145,83 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Update validates and saves the name and email of an existing user.
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
-	// Resolve the target user ID from the URL before reading its update payload.
 	id, ok := parseID(w, r)
 	if !ok {
 		return
 	}
+	if !requireSelf(w, r, id) {
+		return
+	}
 
-	// Prepare a value to receive the update JSON fields.
 	var req models.UpdateUserRequest
-	// Stop if the body is malformed, oversized, or contains extra values.
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	// Normalize and validate the replacement name and email.
 	name, email, errs := validation.User(req.Name, req.Email)
-	// Reject the update if either field has a validation problem.
 	if len(errs) > 0 {
 		writeValidationError(w, errs)
 		return
 	}
 
-	// Persist the validated fields and retrieve the updated user document.
 	user, err := h.repo.Update(r.Context(), id, name, email)
 	if err != nil {
-		// Convert repository outcomes into client-facing status codes.
 		writeRepoError(w, "update user", err)
 		return
 	}
-	// Return the updated user as JSON.
 	response.JSON(w, http.StatusOK, user)
 }
 
-// Delete removes the user identified by the URL's {id} parameter.
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	// Parse and validate the target ID before accessing storage.
 	id, ok := parseID(w, r)
 	if !ok {
 		return
 	}
+	if !requireSelf(w, r, id) {
+		return
+	}
 
-	// Delete the record and map missing-user or database errors to HTTP responses.
 	if err := h.repo.Delete(r.Context(), id); err != nil {
 		writeRepoError(w, "delete user", err)
 		return
 	}
-	// A successful deletion has no response body.
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Me returns the account the token belongs to.
+func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	id, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		response.Error(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+
+	user, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeRepoError(w, "get me", err)
+		return
+	}
+	response.JSON(w, http.StatusOK, user)
+}
+
+// requireSelf allows the request only if the logged-in user is the
+// account being modified. It writes the error response itself.
+func requireSelf(w http.ResponseWriter, r *http.Request, target bson.ObjectID) bool {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "not logged in")
+		return false
+	}
+	if userID != target.Hex() {
+		response.Error(w, http.StatusForbidden, "you can only modify your own account")
+		return false
+	}
+	return true
 }
 
 // ---------- helpers ----------
