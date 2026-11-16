@@ -18,7 +18,7 @@ func CORS(allowedOrigins []string) Middleware {
 			if origin != "" && slices.Contains(allowedOrigins, origin) {
 				h := w.Header()
 				h.Set("Access-Control-Allow-Origin", origin)
-				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 				h.Set("Access-Control-Max-Age", "600") // browser may remember the answer for 10 minutes
 			}
