@@ -24,13 +24,20 @@ func NewPropertyHandler(repo *repository.PropertyRepository) *PropertyHandler {
 
 // ---------- public ----------
 
-// List is public. It returns active properties without contact details.
+// List is public. It returns active properties that match the buyer's
+// filters, without contact details.
 func (h *PropertyHandler) List(w http.ResponseWriter, r *http.Request) {
+	filter, errs := validation.PropertyFilter(r.URL.Query())
+	if len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
+	}
+
 	page := queryInt(r, "page", 1, 100000)
 	limit := queryInt(r, "limit", 20, 100)
 	skip := (page - 1) * limit
 
-	props, total, err := h.repo.List(r.Context(), int64(limit), int64(skip))
+	props, total, err := h.repo.List(r.Context(), filter, int64(limit), int64(skip))
 	if err != nil {
 		writePropertyError(w, "list properties", err)
 		return

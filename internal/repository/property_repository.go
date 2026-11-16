@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/Salim-nuhu/CRUD/internal/models"
@@ -23,13 +24,16 @@ func NewPropertyRepository(db *mongo.Database) (*PropertyRepository, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Indexes make common queries fast, like a book's index saves you from
-	// reading every page. Without them MongoDB scans the whole collection.
+	// Indexes make common queries fast, like the index at the back of a book.
 	_, err := coll.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		// The public list: active properties, newest first.
 		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}},
-		// "Show me this owner's properties" (Step 4).
+		// Browsing by price.
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "price", Value: 1}}},
+		// "Show me this owner's properties".
 		{Keys: bson.D{{Key: "owner_id", Value: 1}}},
+		// Keyword search over titles and descriptions (one text index per collection).
+		{Keys: bson.D{{Key: "title", Value: "text"}, {Key: "description", Value: "text"}}},
 	})
 	if err != nil {
 		return nil, err
@@ -68,13 +72,13 @@ func (repo *PropertyRepository) GetByID(ctx context.Context, id bson.ObjectID) (
 	return &p, nil
 }
 
-// List returns one page of active properties, newest first, plus the total
-// number of active properties. Contact details are never loaded.
-func (repo *PropertyRepository) List(ctx context.Context, limit, skip int64) ([]models.Property, int64, error) {
+// List returns one page of active properties that match the filter, plus the
+// total number of matches. Contact details are never loaded.
+func (repo *PropertyRepository) List(ctx context.Context, f models.PropertyFilter, limit, skip int64) ([]models.Property, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	filter := bson.M{"status": models.StatusActive}
+	filter := buildFilter(f)
 
 	total, err := repo.coll.CountDocuments(ctx, filter)
 	if err != nil {
@@ -82,8 +86,7 @@ func (repo *PropertyRepository) List(ctx context.Context, limit, skip int64) ([]
 	}
 
 	opts := options.Find().
-		// _id as a tie-breaker keeps the order stable between pages.
-		SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
+		SetSort(sortFor(f.Sort)).
 		SetLimit(limit).
 		SetSkip(skip).
 		SetProjection(bson.M{"contact": 0}) // 0 means "leave this field out"
@@ -98,6 +101,70 @@ func (repo *PropertyRepository) List(ctx context.Context, limit, skip int64) ([]
 		return nil, 0, err
 	}
 	return props, total, nil
+}
+
+// buildFilter turns the buyer's choices into a MongoDB query. Only the
+// choices that were given are added. Hidden and closed properties are
+// excluded no matter what.
+func buildFilter(f models.PropertyFilter) bson.M {
+	filter := bson.M{"status": models.StatusActive}
+
+	if f.Query != "" {
+		filter["$text"] = bson.M{"$search": f.Query}
+	}
+	if f.Region != "" {
+		filter["location.region"] = exactInsensitive(f.Region)
+	}
+	if f.City != "" {
+		filter["location.city"] = exactInsensitive(f.City)
+	}
+	if f.ListingType != "" {
+		filter["listing_type"] = f.ListingType
+	}
+	if f.PropertyType != "" {
+		filter["property_type"] = f.PropertyType
+	}
+	if f.Currency != "" {
+		filter["currency"] = f.Currency
+	}
+
+	if f.MinPrice > 0 || f.MaxPrice > 0 {
+		price := bson.M{}
+		if f.MinPrice > 0 {
+			price["$gte"] = f.MinPrice // greater than or equal
+		}
+		if f.MaxPrice > 0 {
+			price["$lte"] = f.MaxPrice // less than or equal
+		}
+		filter["price"] = price
+	}
+	if f.MinBedrooms > 0 {
+		filter["bedrooms"] = bson.M{"$gte": f.MinBedrooms}
+	}
+	if f.MinBathrooms > 0 {
+		filter["bathrooms"] = bson.M{"$gte": f.MinBathrooms}
+	}
+	return filter
+}
+
+// exactInsensitive matches a whole value ignoring upper/lower case. The
+// text is escaped first, so characters like "." and "*" mean themselves
+// and cannot act as pattern commands.
+func exactInsensitive(s string) bson.Regex {
+	return bson.Regex{Pattern: "^" + regexp.QuoteMeta(s) + "$", Options: "i"}
+}
+
+// sortFor maps our sort words to real sort orders. The user's text never
+// goes into the query. _id is the tie-breaker that keeps pages stable.
+func sortFor(sort string) bson.D {
+	switch sort {
+	case models.SortPriceAsc:
+		return bson.D{{Key: "price", Value: 1}, {Key: "_id", Value: 1}}
+	case models.SortPriceDesc:
+		return bson.D{{Key: "price", Value: -1}, {Key: "_id", Value: -1}}
+	default:
+		return bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}
+	}
 }
 
 // ListByOwner returns one page of ALL of an owner's properties, whatever
